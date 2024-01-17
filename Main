@@ -1,0 +1,52 @@
+import time
+import psutil
+import subprocess
+from collections import defaultdict
+
+# Define constants
+GPU_VENDOR = "NVIDIA" # Change according to your needs
+MONITORING_INTERVAL = 1  # Interval in seconds
+THRESHOLD = 0.8         # Threshold for triggering alerts; adjust accordingly
+
+def get_gpu_stats():
+    """Gather GPU stats using platform-dependent commands."""
+    if GPU_VENDOR == "NVIDIA":
+        cmd = ["nvidia-smi", "--format=csv", "--query-gpu=index,memory.used"]
+    elif GPU_VENDOR == "AMD":
+        cmd = ["rocminfo", "-f", "csv", "--power", "state"]
+    else:
+        raise ValueError("Unsupported GPU vendor")
+    
+    try:
+        result = subprocess.check_output(cmd, universal_newlines=True)
+    except Exception as e:
+        print(f"Error fetching GPU stats: {str(e)}")
+        return {}
+    
+    gpu_data = dict()
+    lines = result.strip().split("\n")
+    for line in lines[1:]:
+        parts = line.split(",")
+        index = int(parts[0].replace(" ", ""))
+        mem_usage = float(parts[1].replace("MiB", "").replace(" ", "")) / 1024**2
+        gpu_data[index] = {"mem_usage": mem_usage}
+    
+    return gpu_data
+
+def main():
+    prev_stats = defaultdict(float)
+    
+    while True:
+        current_stats = get_gpu_stats()
+        
+        for idx, stat in current_stats.items():
+            mem_diff = abs(stat["mem_usage"] - prev_stats[idx]["mem_usage"])
+            
+            if mem_diff > THRESHOLD * prev_stats[idx]["mem_usage"]:
+                print(f"Potential anomaly detected on GPU #{idx}: Mem Usage ({mem_diff:.2f} GB vs {prev_stats[idx]['mem_usage']:.2f} GB)")
+                
+        prev_stats = current_stats
+        time.sleep(MONITORING_INTERVAL)
+
+if __name__ == "__main__":
+    main()
