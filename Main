@@ -6,6 +6,7 @@ from email.message import EmailMessage
 import logging
 import sys
 import psutil
+import numpy as np
 
 # Constants
 MONITORING_INTERVAL = int(os.environ.get('MONITORING_INTERVAL', 60))
@@ -32,16 +33,26 @@ def send_email(subject, body):
 
 def check_anomaly(current_stats, prev_stats):
     anomalies = []
-
     for idx, stat in current_stats.items():
-        mem_diff = abs(stat["mem_usage"] - prev_stats[idx]["mem_usage"])
-
-        if mem_diff > THRESHOLD * prev_stats[idx]["mem_usage"]:
-            anomalies.append((idx, f"Mem Usage ({mem_diff:.2f} GB vs {prev_stats[idx]['mem_usage']:.2f} GB)"))
-
+        for metric in config["metrics"]:
+            try:
+                # Calculate Z-score based on previous values
+                history = np.array([val[metric] for val in prev_stats.values()])  # Extract metric history
+                mean = history.mean()
+                std = history.std()
+                if std > 0:  # Avoid division by zero
+                    z_score = (stat[metric] - mean) / std
+                    if np.abs(z_score) > config["z_score_threshold"]:  # Add threshold for z-scores
+                        anomalies.append((idx, f"{metric} (Z-score: {z_score:.2f})"))
+            except (ValueError, ZeroDivisionError) as e:
+                logging.warning(f"Error calculating Z-score for metric {metric}: {str(e)}")
     return anomalies
 
 def gather_gpu_stats():
+
+config = {
+    "z_score_threshold": 3.0  # Default threshold for Z-scores
+
     """Gather GPU stats using platform-dependent commands, with enhanced error handling."""
     try:
         if GPU_VENDOR == "NVIDIA":
