@@ -1,0 +1,104 @@
+import os
+import time
+import subprocess
+import smtplib
+from email.message import EmailMessage
+import logging
+import sys
+import psutil
+
+# Constants
+MONITORING_INTERVAL = int(os.environ.get('MONITORING_INTERVAL', 60))
+THRESHOLD = float(os.environ.get('THRESHOLD', 0.8))
+SMTP_SERVER = os.environ.get('SMTP_SERVER', '')
+SMTP_PORT = int(os.environ.get('SMTP_PORT', 587))
+EMAIL_ADDRESS = os.environ.get('EMAIL_ADDRESS', '')
+EMAIL_PASSWORD = os.environ.get('EMAIL_PASSWORD', '')
+TO_EMAILS = list(map(str.strip, os.environ.get('TO_EMAILS', '').split(',')))
+LOG_FILE = 'gpu_monitor.log'
+
+def send_email(subject, body):
+    msg = EmailMessage()
+    msg.set_content(body)
+    msg['Subject'] = subject
+    msg['From'] = EMAIL_ADDRESS
+    msg['To'] = ', '.join(TO_EMAILS)
+
+    server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
+    server.starttls()
+    server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+    server.send_message(msg)
+    server.quit()
+
+def check_anomaly(current_stats, prev_stats):
+    anomalies = []
+
+    for idx, stat in current_stats.items():
+        mem_diff = abs(stat["mem_usage"] - prev_stats[idx]["mem_usage"])
+
+        if mem_diff > THRESHOLD * prev_stats[idx]["mem_usage"]:
+            anomalies.append((idx, f"Mem Usage ({mem_diff:.2f} GB vs {prev_stats[idx]['mem_usage']:.2f} GB)"))
+
+    return anomalies
+
+def gather_gpu_stats():
+    """Gather GPU stats using platform-dependent commands, with enhanced error handling."""
+    try:
+        if GPU_VENDOR == "NVIDIA":
+            cmd = ["nvidia-smi", "--format=csv", "--query-gpu=index,memory.used,temperature.gpu,power.draw"]  # Add more metrics
+        elif GPU_VENDOR == "AMD":
+            cmd = ["rocminfo", "-f", "csv", "--power", "state"]  # Add more metrics if available
+        else:
+            raise ValueError("Unsupported GPU vendor")
+
+        result = subprocess.check_output(cmd, universal_newlines=True)
+    except Exception as e:
+        logging.error(f"Error fetching GPU stats: {str(e)}")
+        return {}
+
+    # Parse output and extract relevant metrics
+    gpu_data = dict()
+    lines = result.strip().split("\n")
+    for line in lines[1:]:
+        parts = line.split(",")
+        index = int(parts[0].replace(" ", ""))
+        mem_usage = float(parts[1].replace("MiB", "").replace(" ", "")) / 1024**2
+        # Add other metrics as needed, e.g., temperature, power draw
+        gpu_data[index] = {"mem_usage": mem_usage, "temperature": ..., "power_draw": ...}
+
+    return gpu_data
+
+def main():
+    global GPU_VENDOR
+
+    try:
+        GPU_VENDOR = psutil.cpu_info().manufacturer
+    except AttributeError:
+        GPU_VENDOR = ''
+    
+    prev_stats = defaultdict(float)
+
+    logging.basicConfig(filename=LOG_FILE, level=logging.INFO)  # Set up logging
+
+    while True:
+        try:
+            current_stats = gather_gpu_stats()
+
+            anomalies = check_anomaly(current_stats, prev_stats)
+            if anomalies:
+                subject = f"GPU Memory Anomaly Detected (Threshold={THRESHOLD})"
+                bodies = [f"Anomalous GPU #{idx}: {metric}" for idx, metric in anomalies]
+                body = "\n".join(bodies)
+                send_email(subject, body)
+                print(f"{time.ctime()} - Sent email:\nSubject: {subject}\nBody: {body}")
+
+            prev_stats = current_stats
+
+        except KeyboardInterrupt:
+            break
+
+        finally:
+            time.sleep(MONITORING_INTERVAL)
+
+if __name__ == "__main__":
+    main()
