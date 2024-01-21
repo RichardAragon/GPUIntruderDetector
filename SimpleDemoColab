@@ -1,0 +1,146 @@
+!pip install dash
+!pip install jupyter-dash
+
+import csv
+import dash
+import dash_core_components as dcc
+import dash_html_components as html
+from dash.dependencies import Output, Input
+import plotly.graph_objs as go
+import time
+import os
+import subprocess
+import psutil
+import numpy as np
+from collections import defaultdict
+import multiprocessing
+import pandas as pd
+from jupyter_dash import JupyterDash
+import logging  # Add this line
+from threading import Thread
+from flask import request
+
+def run_dash_app(app):
+    # Add a route that will stop the Dash app
+    @app.server.route('/shutdown', methods=['POST'])
+    def shutdown():
+        func = request.environ.get('werkzeug.server.shutdown')
+        if func is None:
+            raise RuntimeError('Not running with the Werkzeug Server')
+        func()
+        return 'Server shutting down...'
+
+    app.run_server(mode='external')
+
+# Constants
+MONITORING_INTERVAL = int(os.environ.get('MONITORING_INTERVAL', 60))
+LOG_FILE = 'gpu_monitor.log'
+GPU_VENDOR = "NVIDIA"  # Define GPU_VENDOR
+
+# Create a Manager object to control the shared data
+manager = multiprocessing.Manager()
+shared_dict = manager.dict()
+
+app = dash.Dash(__name__)
+
+app.layout = html.Div(children=[
+    html.H1(children='GPU Monitoring Dashboard'),
+    dcc.Graph(id='live-update-graph'),
+    dcc.Interval(id='interval-component', interval=1*1000, n_intervals=0)  # in milliseconds
+])
+
+def gather_gpu_stats(file_name='gpu_stats.csv'):
+    """
+    Gather GPU stats using platform-dependent commands, with enhanced error handling.
+
+    Save the collected data into a file in CSV format.
+    """
+    config = {
+        "z_score_threshold": 3.0  # Default threshold for Z-scores
+    }
+
+    try:
+        process = psutil.Process(os.getpid())
+        device_memory = process.memory_info().vms / 1e9
+
+        if GPU_VENDOR == "NVIDIA":
+            cmd = ["nvidia-smi", "--format=csv", "--query-gpu=index,memory.used,temperature.gpu,power.draw"]
+        elif GPU_VENDOR == "AMD":
+            cmd = ["rocminfo", "-f", "csv", "--power", "state"]  # Add more metrics if available
+        else:
+            raise ValueError("Unsupported GPU vendor")
+
+        result = subprocess.check_output(cmd, universal_newlines=True)
+    except Exception as e:
+        logging.error(f"Error fetching GPU stats: {str(e)}")
+        return {}
+
+    # Parse output and extract relevant metrics
+    gpu_data = dict()
+    lines = result.strip().split("\n")
+    header = lines.pop(0).split(',')
+    for line in lines:
+        parts = line.split(',')
+        index = int(parts[0].replace(" ", ""))
+        mem_usage = float(parts[1].replace("MiB", "").replace(" ", "")) / 1024**2
+        temp = float(parts[2].replace(" C", ""))
+        power_draw = float(parts[3].replace("W", ""))
+        timestamp = time.time()  # Add a timestamp
+        gpu_data[index] = {'timestamp': timestamp, 'mem_usage': mem_usage, 'temp': temp, 'power_draw': power_draw}
+
+        # Write to CSV file
+        with open(file_name, 'a') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=['index', 'timestamp', 'mem_usage', 'temp', 'power_draw'])
+            writer.writerow(gpu_data[index])
+
+    return gpu_data
+
+def monitoring_code(stop_time, shared_dict):
+    while True:
+        try:
+            current_stats = gather_gpu_stats()
+
+            # Update shared_dict with the collected stats
+            for idx, stats in current_stats.items():
+                shared_dict[idx] = stats
+
+            # Check if the current time has exceeded the stop time
+            if time.time() > stop_time.value:
+                break
+
+        except KeyboardInterrupt:
+            break
+
+        finally:
+            time.sleep(MONITORING_INTERVAL)
+
+# Callback for live updating
+@app.callback(Output('live-update-graph', 'figure'), Input('interval-component', 'n_intervals'))
+def update_graph_live(n):
+    # Fetch current GPU stats and return as a figure
+    data = list(shared_dict.values())
+    df_gpu = pd.DataFrame(data)
+
+    # Create a line plot of GPU usage over time
+    fig = go.Figure()
+    if 'timestamp' in df_gpu and 'mem_usage' in df_gpu:
+        fig.add_trace(go.Scatter(x=df_gpu['timestamp'], y=df_gpu['mem_usage'], mode='lines+markers', name='GPU Usage (%)'))
+    fig.update_layout(title='GPU Usage Over Time', xaxis_title='Timestamp', yaxis_title='Usage (%)')
+
+    return fig
+
+if __name__ == '__main__':
+    # Create a Value to share the stop time
+    stop_time = multiprocessing.Value('d', time.time() + 60 * 2)  # Replace X with the number of minutes
+
+    # Create processes
+    p1 = multiprocessing.Process(target=monitoring_code, args=(stop_time, shared_dict))
+
+    # Start processes
+    p1.start()
+
+    # Run Dash app in a separate thread
+    Thread(target=run_dash_app, args=(app,)).start()
+
+    # Join processes
+    p1.join()
