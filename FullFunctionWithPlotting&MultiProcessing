@@ -152,6 +152,21 @@ def main():
         finally:
             time.sleep(MONITORING_INTERVAL)
 
+def plotting_code(shared_dict):
+    # Load the data from shared_dict
+    data = list(shared_dict.values())
+    df_gpu = pd.DataFrame(data)
+
+    # Create a line plot of GPU usage over time
+    plt.figure(figsize=(10, 6))
+    plt.plot(df_gpu['timestamp'], df_gpu['usage_gpu'], label='GPU Usage (%)')
+    plt.xlabel('Timestamp')
+    plt.ylabel('Usage (%)')
+    plt.title('GPU Usage Over Time')
+    plt.legend(loc='best')
+    plt.grid(True)
+    plt.show()
+
     # Create processes
     p1 = multiprocessing.Process(target=monitoring_code, args=(stop_time, shared_dict))
     p2 = multiprocessing.Process(target=plotting_code, args=(shared_dict,))
