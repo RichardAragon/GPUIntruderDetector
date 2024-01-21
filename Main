@@ -48,12 +48,18 @@ def check_anomaly(current_stats, prev_stats):
                 logging.warning(f"Error calculating Z-score for metric {metric}: {str(e)}")
     return anomalies
 
-def gather_gpu_stats():
+import csv
 
-config = {
-    "z_score_threshold": 3.0  # Default threshold for Z-scores
+def gather_gpu_stats(file_name='gpu_stats.csv'):
+    """
+    Gather GPU stats using platform-dependent commands, with enhanced error handling.
 
-    """Gather GPU stats using platform-dependent commands, with enhanced error handling."""
+    Save the collected data into a file in CSV format.
+    """
+    config = {
+        "z_score_threshold": 3.0  # Default threshold for Z-scores
+    }
+
     try:
         if GPU_VENDOR == "NVIDIA":
             cmd = ["nvidia-smi", "--format=csv", "--query-gpu=index,memory.used,temperature.gpu,power.draw"]  # Add more metrics
@@ -70,12 +76,19 @@ config = {
     # Parse output and extract relevant metrics
     gpu_data = dict()
     lines = result.strip().split("\n")
-    for line in lines[1:]:
-        parts = line.split(",")
-        index = int(parts[0].replace(" ", ""))
-        mem_usage = float(parts[1].replace("MiB", "").replace(" ", "")) / 1024**2
-        # Add other metrics as needed, e.g., temperature, power draw
-        gpu_data[index] = {"mem_usage": mem_usage, "temperature": ..., "power_draw": ...}
+    header = lines.pop(0).split(',')
+    with open(file_name, mode='a') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=header)
+        if len(lines) == 0:
+            writer.writeheader()
+        for line in lines:
+            parts = line.split(',')
+            index = int(parts[0].replace(" ", ""))
+            mem_usage = float(parts[1].replace("MiB", "").replace(" ", "")) / 1024**2
+            temp = float(parts[2].replace(" C", ""))
+            power_draw = float(parts[3].replace("W", ""))
+            gpu_data[index] = {'mem_usage': mem_usage, 'temp': temp, 'power_draw': power_draw}
+            writer.writerow({'index': index, 'mem_usage': mem_usage, 'temp': temp, 'power_draw': power_draw})
 
     return gpu_data
 
