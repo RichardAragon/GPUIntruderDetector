@@ -1,0 +1,11 @@
+# For real-time alerts, you can integrate with Slack
+import slack
+
+def send_slack_message(channel_id, message):
+    client = slack.WebClient(token='your-slack-token')
+    response = client.chat_postMessage(channel=channel_id, text=message)
+
+# Then in your check_anomaly function, you can send a Slack message
+if anomalies:
+    message = "\n".join(f"Anomalous GPU #{idx}: {metric}" for idx, metric in anomalies)
+    send_slack_message('your-channel-id', message)
