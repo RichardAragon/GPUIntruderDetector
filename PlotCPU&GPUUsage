@@ -1,0 +1,20 @@
+import matplotlib.pyplot as plt
+import pandas as pd
+
+# Load the data from the CSV files
+df_cpu = pd.read_csv('cpu_usage.csv')
+df_gpu = pd.read_csv('gpu_usage.csv')
+
+# Merge the CPU and GPU usage dataframes on the timestamp column
+df = pd.merge(df_cpu, df_gpu, on='timestamp')
+
+# Create a line plot of CPU and GPU usage over time
+plt.figure(figsize=(10, 6))
+plt.plot(df['timestamp'], df['usage_cpu'], label='CPU Usage (%)')
+plt.plot(df['timestamp'], df['usage_gpu'], label='GPU Usage (%)')
+plt.xlabel('Timestamp')
+plt.ylabel('Usage (%)')
+plt.title('CPU and GPU Usage Over Time')
+plt.legend(loc='best')
+plt.grid(True)
+plt.show()
